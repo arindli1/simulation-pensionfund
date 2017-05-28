@@ -1,0 +1,1411 @@
+Option Explicit
+Option Base 1
+
+
+Const CT_SIMULATIONMAX = 1000
+
+Const CT_NUMBERINFORMATION = 5
+
+Const CT_FIRSTPOINTPLACEINARRAY = CT_NUMBERINFORMATION + 1
+
+Const CT_TIMEPERIOD = 70
+
+Const CT_NUMBEROFTIMEPOINT = CT_TIMEPERIOD + 1
+
+Const CT_NUMBERACTIVE = 40
+
+Dim params As New Scripting.Dictionary
+
+Dim arrayInsured(CT_SIMULATIONMAX, CT_NUMBERINFORMATION + CT_NUMBEROFTIMEPOINT, CT_NUMBERACTIVE)
+Dim disabledArray(CT_SIMULATIONMAX, CT_NUMBERINFORMATION + CT_NUMBEROFTIMEPOINT, 300)
+Dim deadArray(CT_SIMULATIONMAX, CT_NUMBERINFORMATION + CT_NUMBEROFTIMEPOINT, 300)
+Dim WithdrawalArray(CT_SIMULATIONMAX, CT_NUMBERINFORMATION + CT_NUMBEROFTIMEPOINT, 300)
+Dim RetirementArray(CT_SIMULATIONMAX, CT_NUMBERINFORMATION + CT_NUMBEROFTIMEPOINT, 300)
+
+Dim totalContributionsBenefitsArray(CT_SIMULATIONMAX, CT_NUMBEROFTIMEPOINT, 2)
+
+Dim SumOfContributionsBenefitsOverEverySimulations(CT_NUMBEROFTIMEPOINT, 2)
+Dim AverageOfContributionsBenefits(CT_NUMBEROFTIMEPOINT, 2)
+
+Dim IndividualReserveArray(CT_SIMULATIONMAX, CT_NUMBEROFTIMEPOINT, CT_NUMBERACTIVE)
+Dim CommitmentBenefitsArray(CT_SIMULATIONMAX, CT_NUMBEROFTIMEPOINT)
+
+Dim totalReserve(CT_SIMULATIONMAX, CT_NUMBEROFTIMEPOINT)
+
+Dim SumOfReservesOverEverySimulation(CT_NUMBEROFTIMEPOINT)
+Dim SumOfCommitmentBenefits(CT_NUMBEROFTIMEPOINT)
+
+Dim AverageReserves(CT_NUMBEROFTIMEPOINT)
+Dim AverageCommitmentBenefits(CT_NUMBEROFTIMEPOINT)
+
+Dim v(120)
+Dim lxaFrauen(65)
+Dim lxaMänner(65)
+
+Dim asset(CT_SIMULATIONMAX, CT_NUMBEROFTIMEPOINT)
+
+Dim arrayQuartile(CT_SIMULATIONMAX)
+
+Dim AverageAsset(CT_NUMBEROFTIMEPOINT)
+
+' To change if retirement age different from 65
+' Worksheets("Parameter").Cells(6, 2) =65
+Dim arraySalaries(65)
+
+
+Dim varianceArray(CT_NUMBEROFTIMEPOINT)
+
+Sub GetParams()
+
+    If Not params.Exists("RetirementAgeMen") Then
+    
+    ' Get worksheet
+    Dim wk As Worksheet
+    Set wk = ThisWorkbook.Worksheets("Parameter")
+    
+    ' Get range for all the matches
+    Dim rgParams As Range
+    Set rgParams = wk.Range("B4:E10")
+    
+    Dim key As String
+    Dim value As Variant
+
+    Dim row As Range
+    For Each row In rgParams.Rows
+        ' read the data from each param
+        key = row.Cells(1, 4)
+        value = row.Cells(1, 1)
+        Debug.Print key, value
+        params(key) = value
+    Next row
+    
+Call fillArraySalaryScale
+Call fillvn
+Call filllxaMänner
+Call filllxaFrauen
+Call fillArray
+
+End If
+    
+End Sub
+
+'---------------------------------------------------------------------------------
+'fill array with v^n
+'---------------------------------------------------------------------------------
+Sub fillvn()
+    Dim i As Integer
+    For i = 1 To 120
+        v(i) = Worksheets("Zinszahlen").Cells(9 + i, 3)
+    Next i
+End Sub
+
+'---------------------------------------------------------------------------------
+'fill array with lx(a)
+'---------------------------------------------------------------------------------
+Sub filllxaMänner()
+    Dim i As Integer
+    For i = 17 To 65
+        lxaMänner(i) = Worksheets("Männer").Cells(i - 8, 8)
+    Next i
+End Sub
+
+Sub filllxaFrauen()
+    Dim i As Integer
+    For i = 17 To 65
+        lxaFrauen(i) = Worksheets("Frauen").Cells(i - 8, 8)
+    Next i
+End Sub
+
+'---------------------------------------------------------------------------------
+' summary : fills up the array containing the salary scale
+'---------------------------------------------------------------------------------
+
+Sub fillArraySalaryScale()
+    Dim arraySalaryLine
+    Dim row As Integer
+    Dim age As Integer
+    
+    ' fill array with null values for age under 20
+    For age = 1 To 19
+        arraySalaries(age) = 0
+    Next age
+    
+    ' get next values from worksheet Salaries
+    For age = 20 To params("RetirementAgeMen")
+        row = age - 18
+        arraySalaries(age) = Worksheets("Salaries").Cells(row, 2)
+    Next age
+End Sub
+
+'---------------------------------------------------------------------------------
+' summary : defines whether the insured/pensioner is married or not
+' age: current age of the insured person (25>= age <= 64)
+'---------------------------------------------------------------------------------
+Function conjoint(age, gender)
+    Dim wx
+    Dim ranNumb
+    If gender = "M" Then
+        wx = Worksheets("Männer").Cells(age - 17 + 9, 16)
+        ranNumb = Rnd()
+        If ranNumb < wx Then 'Married
+            conjoint = params("Married")
+        Else
+            conjoint = params("Single")
+        End If
+    Else
+        wx = Worksheets("Frauen").Cells(age - 17 + 9, 16)
+        ranNumb = Rnd()
+        If ranNumb < wx Then 'Married
+            conjoint = params("Married")
+        Else
+            conjoint = params("Single")
+        End If
+    End If
+End Function
+
+'---------------------------------------------------------------------------------
+' summary : returns the age of the widow if any
+' age : current age of the insured person (25>= age <= 64)
+'---------------------------------------------------------------------------------
+Function AgeWidow(age, gender)
+    If gender = "M" Then
+        AgeWidow = Round(Worksheets("Männer").Cells(age - 17 + 9, 17))
+    Else
+        AgeWidow = Round(Worksheets("Frauen").Cells(age - 17 + 9, 17))
+    End If
+End Function
+
+'---------------------------------------------------------------------------------
+' summary : returns the number of children if any
+' age : current age of the insured person (25>= age <= 64)
+'---------------------------------------------------------------------------------
+Function NumberChild(age, gender)
+    If gender = "M" Then
+        NumberChild = Round(Worksheets("Männer").Cells(age - 17 + 9, 18))
+    Else
+        NumberChild = Round(Worksheets("Frauen").Cells(age - 17 + 9, 18))
+    End If
+End Function
+
+'---------------------------------------------------------------------------------
+' summary : returns the age of the children if any
+' age : current age of the insured person (25>= age <= 64)
+'---------------------------------------------------------------------------------
+Function ageChild(age, gender)
+    If gender = "M" Then
+        ageChild = Round(Worksheets("Männer").Cells(age - 17 + 9, 19))
+    Else
+        ageChild = Round(Worksheets("Frauen").Cells(age - 17 + 9, 19))
+    End If
+End Function
+
+'---------------------------------------------------------------------------------
+' summary : defines which retirement credits rate applies
+' age : current age of the insured person (25>= age <= 64)
+'---------------------------------------------------------------------------------
+Function rateForAge(age) As Double
+    Dim rate
+    Select Case age
+        Case 25 To 34
+            rate = 0.07
+        Case 35 To 44
+            rate = 0.1
+        Case 45 To 54
+            rate = 0.15
+        Case 55 To params("RetirementAgeMen")
+            rate = 0.18
+        Case Else
+            rate = 0
+    End Select
+    rateForAge = rate
+End Function
+
+'---------------------------------------------------------------------------------
+' summary :  Calculate the amount available in the saving account at retirement age
+' age : current age of the insured person (25>= age <= 64)
+' gender: gender of the insured
+' salary : current salary of the insured person
+'---------------------------------------------------------------------------------
+Function projectedSavingAccount(age, gender, salary, vestedBenefits) As Double
+    Dim bonification As Double
+    Dim salaryT
+    Dim ageIncrement
+    
+    GetParams
+    
+    If gender = "M" Then
+        For ageIncrement = age To params("RetirementAgeMen")
+            ' calculate the expected salary for years to come until retirement
+            salaryT = salary * (arraySalaries(ageIncrement) / arraySalaries(age))
+            ' add the new retirement credits to the saving account
+            projectedSavingAccount = projectedSavingAccount + rateForAge(ageIncrement) * salaryT
+        Next ageIncrement
+    Else
+        For ageIncrement = age To params("RetirementAgeWomen")
+            ' calculate the expected salary for years to come until retirement
+            salaryT = salary * (arraySalaries(ageIncrement) / arraySalaries(age))
+            ' add the new retirement credits to the saving account
+            projectedSavingAccount = projectedSavingAccount + rateForAge(ageIncrement) * salaryT
+        Next ageIncrement
+    End If
+    projectedSavingAccount = projectedSavingAccount + vestedBenefits
+End Function
+
+'---------------------------------------------------------------------------------
+' summary : fills up the arrays containing the initial insured and pensioners
+'           (ie: when the simulation is performed)
+'---------------------------------------------------------------------------------
+Sub fillArray()
+    
+    Dim initNumInsured
+    initNumInsured = Worksheets("Active persons").Range("A1").End(xlDown).row - 1 + Worksheets("Retired persons").Range("A1").End(xlDown).row - 1 + Worksheets("Disabled persons").Range("A1").End(xlDown).row - 1 + Worksheets("Withdrawal at t = 0").Range("A1").End(xlDown).row - 1
+    Dim i As Integer
+    Dim j As Integer
+
+    For i = 1 To initNumInsured
+        For j = 1 To CT_SIMULATIONMAX
+    
+            If i <= 40 Then
+    
+                arrayInsured(j, 1, i) = Worksheets("Active Persons").Cells(i + 1, 1)
+                arrayInsured(j, 2, i) = Worksheets("Active Persons").Cells(i + 1, 2)
+                arrayInsured(j, 3, i) = Worksheets("Active Persons").Cells(i + 1, 4)
+                arrayInsured(j, 4, i) = Worksheets("Active Persons").Cells(i + 1, 20)
+                arrayInsured(j, 5, i) = Worksheets("Active Persons").Cells(i + 1, 6)
+                arrayInsured(j, 6, i) = arrayInsured(j, 4, i) * arrayInsured(j, 3, i)
+                totalReserve(j, 1) = totalReserve(j, 1) + IndividualReserveIfActive(arrayInsured(j, 2, i), arrayInsured(j, 5, i), arrayInsured(j, 3, i), Worksheets("Active Persons").Cells(i + 1, 7))
+                CommitmentBenefitsArray(j, 1) = CommitmentBenefitsArray(j, 1) + BenefitsCommitments(arrayInsured(j, 2, i), arrayInsured(j, 5, i), arrayInsured(j, 3, i), Worksheets("Active Persons").Cells(i + 1, 7))
+    
+            ElseIf i <= 52 Then
+                RetirementArray(j, 1, i - 40) = Worksheets("Retired Persons").Cells(i - 40 + 1, 1)
+                RetirementArray(j, 2, i - 40) = Worksheets("Retired Persons").Cells(i - 40 + 1, 2)
+                RetirementArray(j, 3, i - 40) = Worksheets("Retired Persons").Cells(i - 40 + 1, 4)
+                RetirementArray(j, 5, i - 40) = Worksheets("Retired Persons").Cells(i - 40 + 1, 3)
+                RetirementArray(j, 6, i - 40) = Worksheets("Retired Persons").Cells(i - 40 + 1, 6)
+                totalReserve(j, 1) = totalReserve(j, 1) + IndividualReserveIfRetired(RetirementArray(j, 2, i - 40), RetirementArray(j, 5, i - 40), 23, RetirementArray(j, 6, i - 40), 0, 0, 0)
+                CommitmentBenefitsArray(j, 1) = CommitmentBenefitsArray(j, 1) + IndividualReserveIfRetired(RetirementArray(j, 2, i - 40), RetirementArray(j, 5, i - 40), 23, RetirementArray(j, 6, i - 40), 0, 0, 0)
+            ElseIf i <= 54 Then
+
+                disabledArray(j, 1, i - 52) = Worksheets("Disabled Persons").Cells(i - 52 + 1, 1)
+                disabledArray(j, 2, i - 52) = Worksheets("Disabled Persons").Cells(i - 52 + 1, 2)
+                disabledArray(j, 3, i - 52) = Worksheets("Disabled Persons").Cells(i - 52 + 1, 4)
+                disabledArray(j, 5, i - 52) = Worksheets("Disabled Persons").Cells(i - 52 + 1, 3)
+                disabledArray(j, 6, i - 52) = Worksheets("Disabled Persons").Cells(i - 52 + 1, 6)
+                totalReserve(j, 1) = totalReserve(j, 1) + IndividualReserveIfDisabled(disabledArray(j, 2, i - 52), disabledArray(j, 5, i - 52), 23, disabledArray(j, 6, i - 52), 0)
+                CommitmentBenefitsArray(j, 1) = CommitmentBenefitsArray(j, 1) + IndividualReserveIfDisabled(disabledArray(j, 2, i - 52), disabledArray(j, 5, i - 52), 23, disabledArray(j, 6, i - 52), 0)
+            Else
+
+                WithdrawalArray(j, 1, i - 54) = Worksheets("Withdrawal at t = 0").Cells(i - 54 + 1, 1)
+                WithdrawalArray(j, 2, i - 54) = Worksheets("Withdrawal at t = 0").Cells(i - 54 + 1, 2)
+                WithdrawalArray(j, 3, i - 54) = Worksheets("Withdrawal at t = 0").Cells(i - 54 + 1, 4)
+                WithdrawalArray(j, 5, i - 54) = Worksheets("Withdrawal at t = 0").Cells(i - 54 + 1, 3)
+                WithdrawalArray(j, 6, i - 54) = Worksheets("Withdrawal at t = 0").Cells(i - 54 + 1, 6)
+                totalReserve(j, 1) = totalReserve(j, 1) + WithdrawalArray(j, 6, i - 54)
+                CommitmentBenefitsArray(j, 1) = CommitmentBenefitsArray(j, 1) + WithdrawalArray(j, 6, i - 54)
+            End If
+        Next j
+    Next i
+End Sub
+
+'---------------------------------------------------------------------------------
+' summary : returns the salary of the insured when joining the pension fund
+' age : current age of the insured person (25>= age <= 64)
+'---------------------------------------------------------------------------------
+Function salaireinsuredPerson(age)
+    Select Case age
+        Case 25 To 29
+            salaireinsuredPerson = Int((3000 - 1765 + 1) * Rnd + 1765) * 12
+        Case 30 To 39
+            salaireinsuredPerson = Int((4500 - 2800 + 1) * Rnd + 2800) * 12
+        Case 40 To 49
+            salaireinsuredPerson = Int((8000 - 4000 + 1) * Rnd + 4000) * 12
+        Case 50 To 59
+            salaireinsuredPerson = Int((13000 - 7500 + 1) * Rnd + 7500) * 12
+        Case 60 To params("RetirementAgeMen")
+            salaireinsuredPerson = Int((16000 - 12000 + 1) * Rnd + 12000) * 12
+        Case Else
+            salaireinsuredPerson = 0
+    End Select
+End Function
+
+Function retirementPension(age, gender, salaire, vestedBenefits)
+    retirementPension = projectedSavingAccount(age, gender, salaire, vestedBenefits) * 0.068
+End Function
+
+Function disabilityPension(age, gender, salaire, vestedBenefits) 'the age actually corresponds to the age at which the insured got disabled
+    disabilityPension = projectedSavingAccount(age, gender, salaire, vestedBenefits) * 0.068
+End Function
+
+Function widowPensionBeforeRetirement(age, gender, salaire, vestedBenefits)
+    widowPensionBeforeRetirement = 0.6 * disabilityPension(age, gender, salaire, vestedBenefits)
+End Function
+
+Function widowPensionAfterRetirement(age, gender, salaire, vestedBenefits)
+    widowPensionAfterRetirement = 0.6 * retirementPension(age, gender, salaire, vestedBenefits)
+End Function
+
+Function retiredChildPension(age, gender, salaire, vestedBenefits)
+    retiredChildPension = 0.2 * retirementPension(age, gender, salaire, vestedBenefits)
+End Function
+
+Function orphanPensionBeforeRetirement(age, gender, salaire, vestedBenefits)
+    orphanPensionBeforeRetirement = 0.2 * disabilityPension(age, gender, salaire, vestedBenefits)
+End Function
+
+Function orphanPensionAfterRetirement(age, gender, salaire, vestedBenefits)
+    orphanPensionAfterRetirement = 0.2 * retirementPension(age, gender, salaire, vestedBenefits)
+End Function
+
+Function disabledChildPension(age, gender, salaire, vestedBenefits)
+    disabledChildPension = 0.2 * disabilityPension(age, gender, salaire, vestedBenefits)
+End Function
+
+'-----------------------------------------------------------------------
+'summary : Calculate the present value of salaries
+'-----------------------------------------------------------------------
+
+Function PVfutureSalaries(age, salaire, gender, vestedBenefits)
+
+    Dim t As Integer
+    
+    PVfutureSalaries = 0
+    Dim multiplicator As Double
+    multiplicator = salaire / arraySalaries(age)
+    
+    If gender = "M" Then
+        For t = 0 To params("RetirementAgeMen") - age - 1
+            If t = 0 Then
+                PVfutureSalaries = PVfutureSalaries + arraySalaries(age + t)
+            Else
+                PVfutureSalaries = PVfutureSalaries + arraySalaries(age + t) * (lxaMänner(age + t) / lxaMänner(age)) * v(t)
+            End If
+        Next t
+    Else
+        For t = 0 To params("RetirementAgeWomen") - age - 1
+            If t = 0 Then
+                PVfutureSalaries = PVfutureSalaries + arraySalaries(age + t)
+            Else
+                PVfutureSalaries = PVfutureSalaries + arraySalaries(age + t) * (lxaFrauen(age + t) / lxaFrauen(age)) * v(t)
+            End If
+        Next t
+    End If
+    
+    PVfutureSalaries = multiplicator * PVfutureSalaries
+
+End Function
+
+Function tauxCotisation(age, salaire, gender, vestedBenefits)
+    Dim PVretirementPension
+    Dim PVdisabilityPension
+    Dim PVwidowPension
+    Dim PVretiredChildPension
+    Dim PVorphanPension
+    Dim PVdisabledChildPension
+    Dim PVfuturePremium
+    Dim PVfutureBenefits
+    
+    GetParams
+        
+    If gender = "M" Then
+        PVretirementPension = Worksheets("Männer").Cells(age - 17 + 9, 66)
+        PVdisabilityPension = Worksheets("Männer").Cells(age - 17 + 9, 67)
+        PVwidowPension = Worksheets("Männer").Cells(age - 17 + 9, 89)
+        PVretiredChildPension = Worksheets("Männer").Cells(age - 17 + 9, 83)
+        PVorphanPension = Worksheets("Männer").Cells(age - 17 + 9, 243)
+        PVdisabledChildPension = Worksheets("Männer").Cells(age - 17 + 9, 80)
+    Else
+        PVretirementPension = Worksheets("Frauen").Cells(age - 17 + 9, 66)
+        PVdisabilityPension = Worksheets("Frauen").Cells(age - 17 + 9, 67)
+        PVwidowPension = Worksheets("Frauen").Cells(age - 17 + 9, 89)
+        PVretiredChildPension = Worksheets("Frauen").Cells(age - 17 + 9, 83)
+        PVorphanPension = Worksheets("Frauen").Cells(age - 17 + 9, 243)
+        PVdisabledChildPension = Worksheets("Frauen").Cells(age - 17 + 9, 80)
+    End If
+
+    PVfutureBenefits = (retirementPension(age, gender, salaire, vestedBenefits) * PVretirementPension) + (disabilityPension(age, gender, salaire, vestedBenefits) * PVdisabilityPension) + _
+    (widowPensionBeforeRetirement(age, gender, salaire, vestedBenefits) * PVwidowPension) + (retiredChildPension(age, gender, salaire, vestedBenefits) * PVretiredChildPension) + _
+    (orphanPensionBeforeRetirement(age, gender, salaire, vestedBenefits) * PVorphanPension) + (disabledChildPension(age, gender, salaire, vestedBenefits) * PVdisabledChildPension)
+
+    tauxCotisation = (PVfutureBenefits - vestedBenefits) / PVfutureSalaries(age, salaire, gender, vestedBenefits)
+    
+    If tauxCotisation < 0 Then
+        tauxCotisation = 0
+    End If
+End Function
+
+Function BenefitsCommitments(age, gender, salary, vestedBenefits)
+    Dim PVofFutureBenefits
+    Dim PVofFuturePremiums
+    Dim PVretirementPension
+    Dim PVdisabilityPension
+    Dim PVwidowPension
+    Dim PVretiredChildPension
+    Dim PVorphanPension
+    Dim PVdisabledChildPension
+    Dim PVfuturePremium
+    Dim PVfutureBenefits
+
+    If gender = "M" Then
+        PVretirementPension = Worksheets("Männer").Cells(age - 17 + 9, 73)
+        PVdisabilityPension = Worksheets("Männer").Cells(age - 17 + 9, 74)
+        PVwidowPension = Worksheets("Männer").Cells(age - 17 + 9, 89)
+        PVretiredChildPension = Worksheets("Männer").Cells(age - 17 + 9, 83)
+        PVorphanPension = Worksheets("Männer").Cells(age - 17 + 9, 243)
+        PVdisabledChildPension = Worksheets("Männer").Cells(age - 17 + 9, 80)
+    Else
+        PVretirementPension = Worksheets("Frauen").Cells(age - 17 + 9, 73)
+        PVdisabilityPension = Worksheets("Frauen").Cells(age - 17 + 9, 74)
+        PVwidowPension = Worksheets("Frauen").Cells(age - 17 + 9, 89)
+        PVretiredChildPension = Worksheets("Frauen").Cells(age - 17 + 9, 83)
+        PVorphanPension = Worksheets("Frauen").Cells(age - 17 + 9, 243)
+        PVdisabledChildPension = Worksheets("Frauen").Cells(age - 17 + 9, 80)
+    End If
+    
+    PVofFutureBenefits = (retirementPension(age, gender, salary, vestedBenefits) * PVretirementPension) + (disabilityPension(age, gender, salary, vestedBenefits) * PVdisabilityPension) + _
+    (widowPensionBeforeRetirement(age, gender, salary, vestedBenefits) * PVwidowPension) + (retiredChildPension(age, gender, salary, vestedBenefits) * PVretiredChildPension) + _
+    (orphanPensionBeforeRetirement(age, gender, salary, vestedBenefits) * PVorphanPension) + (disabledChildPension(age, gender, salary, vestedBenefits) * PVdisabledChildPension)
+    
+    BenefitsCommitments = PVofFutureBenefits
+End Function
+
+'----------------------------------------------------------------------------
+' Summary:  The following functions return the value of the reserves in case
+'           of an active / dead / disabled / retired member
+'----------------------------------------------------------------------------
+
+Function IndividualReserveIfActive(age, gender, salary, vestedBenefits)
+    Dim PVofFutureBenefits
+    Dim PVofFuturePremiums
+    Dim PVretirementPension
+    Dim PVdisabilityPension
+    Dim PVwidowPension
+    Dim PVretiredChildPension
+    Dim PVorphanPension
+    Dim PVdisabledChildPension
+    Dim PVfuturePremium
+    Dim PVfutureBenefits
+    
+    If gender = "M" Then
+        PVretirementPension = Worksheets("Männer").Cells(age - 17 + 9, 73)
+        PVdisabilityPension = Worksheets("Männer").Cells(age - 17 + 9, 74)
+        PVwidowPension = Worksheets("Männer").Cells(age - 17 + 9, 89)
+        PVretiredChildPension = Worksheets("Männer").Cells(age - 17 + 9, 83)
+        PVorphanPension = Worksheets("Männer").Cells(age - 17 + 9, 243)
+        PVdisabledChildPension = Worksheets("Männer").Cells(age - 17 + 9, 80)
+    Else
+        PVretirementPension = Worksheets("Frauen").Cells(age - 17 + 9, 73)
+        PVdisabilityPension = Worksheets("Frauen").Cells(age - 17 + 9, 74)
+        PVwidowPension = Worksheets("Frauen").Cells(age - 17 + 9, 89)
+        PVretiredChildPension = Worksheets("Frauen").Cells(age - 17 + 9, 83)
+        PVorphanPension = Worksheets("Frauen").Cells(age - 17 + 9, 243)
+        PVdisabledChildPension = Worksheets("Frauen").Cells(age - 17 + 9, 80)
+    End If
+    
+    PVofFutureBenefits = (retirementPension(age, gender, salary, vestedBenefits) * PVretirementPension) + (disabilityPension(age, gender, salary, vestedBenefits) * PVdisabilityPension) + _
+    (widowPensionBeforeRetirement(age, gender, salary, vestedBenefits) * PVwidowPension) + (retiredChildPension(age, gender, salary, vestedBenefits) * PVretiredChildPension) + _
+    (orphanPensionBeforeRetirement(age, gender, salary, vestedBenefits) * PVorphanPension) + (disabledChildPension(age, gender, salary, vestedBenefits) * PVdisabledChildPension)
+    
+    IndividualReserveIfActive = PVofFutureBenefits - PVfutureSalaries(age, salary, gender, vestedBenefits)
+End Function
+
+Function IndividualReserveIfDead(age, gender, ageChild As Integer, RCS, RO)
+    If gender = "M" Then
+        If ageChild <= 25 Then
+            IndividualReserveIfDead = Worksheets("Männer").Cells(age - 17 + 9, 56) * RCS + RO * Worksheets("Männer").Cells(ageChild + 9, 60)
+        Else
+            IndividualReserveIfDead = Worksheets("Männer").Cells(age - 17 + 9, 56) * RCS
+        End If
+    Else
+        If ageChild <= 25 Then
+            IndividualReserveIfDead = Worksheets("Frauen").Cells(age - 17 + 9, 56) * RCS + RO * Worksheets("Frauen").Cells(ageChild + 9, 60)
+        Else
+            IndividualReserveIfDead = Worksheets("Frauen").Cells(age - 17 + 9, 56) * RCS
+        End If
+    End If
+End Function
+
+Function IndividualReserveIfDisabled(age, gender, ageChild As Integer, RI, REI) 'remplacer 0.6* RI par RCS
+    If gender = "M" Then
+        If age <= params("RetirementAgeMen") Then
+            IndividualReserveIfDisabled = Worksheets("Männer").Cells(age - 17 + 9, 39) * RI + Worksheets("Männer").Cells(ageChild + 9, 60) * REI + Worksheets("Männer").Cells(age - 17 + 9, 92) * 0.6 * RI + Worksheets("Männer").Cells(age - 17 + 9, 246) * REI
+        ElseIf age < 103 Then
+            IndividualReserveIfDisabled = Worksheets("Männer").Cells(age - 17 + 9, 48) * RI + Worksheets("Männer").Cells(ageChild + 9, 60) * REI + Worksheets("Männer").Cells(age - 65 + 9, 97) * 0.6 * RI + Worksheets("Männer").Cells(age - 65 + 9, 251) * REI
+        Else
+            IndividualReserveIfDisabled = Worksheets("Männer").Cells(ageChild + 9, 60) * REI + Worksheets("Männer").Cells(age - 65 + 9, 97) * 0.6 * RI + Worksheets("Männer").Cells(age - 65 + 9, 251) * REI
+        End If
+    Else
+        If age <= params("RetirementAgeWomen") Then
+            IndividualReserveIfDisabled = Worksheets("Frauen").Cells(age - 17 + 9, 39) * RI + Worksheets("Frauen").Cells(ageChild + 9, 60) * REI + Worksheets("Frauen").Cells(age - 17 + 9, 92) * 0.6 * RI + Worksheets("Frauen").Cells(age - 17 + 9, 246) * REI
+        ElseIf age < 105 Then
+            IndividualReserveIfDisabled = Worksheets("Frauen").Cells(age - 17 + 9, 48) * RI + Worksheets("Frauen").Cells(ageChild + 9, 60) * REI + Worksheets("Frauen").Cells(age - 65 + 9, 97) * 0.6 * RI + Worksheets("Frauen").Cells(age - 65 + 9, 251) * REI
+        Else
+            IndividualReserveIfDisabled = Worksheets("Frauen").Cells(ageChild + 9, 60) * REI + Worksheets("Frauen").Cells(age - 65 + 9, 97) * 0.6 * RI + Worksheets("Frauen").Cells(age - 65 + 9, 251) * REI
+        End If
+    End If
+End Function
+
+Function IndividualReserveIfRetired(age, gender, ageChild As Integer, RR, RER, RCS, RO)
+    If gender = "M" Then
+        If age < params("RetirementAgeMen") Then
+            IndividualReserveIfRetired = Worksheets("Männer").Cells(age - 17 + 9, 89) * RCS + RO * Worksheets("Männer").Cells(age - 17 + 9, 243) + Worksheets("Männer").Cells(ageChild + 9, 48) * RR + RER * Worksheets("Männer").Cells(ageChild + 9, 60)
+        Else
+            IndividualReserveIfRetired = Worksheets("Männer").Cells(age - 65 + 9, 97) * RCS + RO * Worksheets("Männer").Cells(age - 65 + 9, 251) + Worksheets("Männer").Cells(ageChild + 9, 48) * RR + RER * Worksheets("Männer").Cells(ageChild + 9, 60)
+        End If
+    Else
+        If age < params("RetirementAgeWomen") Then
+            IndividualReserveIfRetired = Worksheets("Frauen").Cells(age - 17 + 9, 89) * RCS + RO * Worksheets("Frauen").Cells(age - 17 + 9, 243) + Worksheets("Frauen").Cells(ageChild + 9, 48) * RR + RER * Worksheets("Frauen").Cells(ageChild + 9, 60)
+        Else
+            IndividualReserveIfRetired = Worksheets("Frauen").Cells(age - 65 + 9, 97) * RCS + RO * Worksheets("Frauen").Cells(age - 65 + 9, 251) + Worksheets("Frauen").Cells(ageChild + 9, 48) * RR + RER * Worksheets("Frauen").Cells(ageChild + 9, 60)
+        End If
+    End If
+End Function
+
+'-------------------------------------------------------------------------------
+' Calculate the initial vested benefits when an insured enters the pension fund
+'-------------------------------------------------------------------------------
+Function vestedBenefits(simulation, insured)
+    Dim salaryAt25
+    salaryAt25 = arrayInsured(simulation, 3, insured) * (arraySalaries(25) / arraySalaries(arrayInsured(simulation, 2, insured)))
+    vestedBenefits = projectedSavingAccount(25, arrayInsured(simulation, 5, insured), salaryAt25, 0) - projectedSavingAccount(arrayInsured(simulation, 2, insured), arrayInsured(simulation, 5, insured), arrayInsured(simulation, 3, insured), 0)
+    'vestedBenefits = projectedSavingAccount(25, arrayInsured(simulation, 5, insured), arrayInsured(simulation, 3, insured), 0) - projectedSavingAccount(arrayInsured(simulation, 2, insured), arrayInsured(simulation, 5, insured), arrayInsured(simulation, 3, insured), 0)
+End Function
+
+
+Sub simulation()
+
+    Dim countDead
+    Dim countDisabled
+    Dim countActive
+    Dim countRetired
+    Dim countWithdrawal
+
+    Dim insuredPerson As Integer
+    Dim initNumInsured As Integer
+    Dim temps As Integer
+    Dim simulation As Integer
+
+    Dim moyenneCotisationsAnnuelles
+    Dim moyennePrestationsAnnuelles
+
+    Call GetParams
+
+    For simulation = 1 To CT_SIMULATIONMAX
+
+        initNumInsured = Worksheets("Active persons").Range("A1").End(xlDown).row - 1 + Worksheets("Retired persons").Range("A1").End(xlDown).row - 1 + Worksheets("Disabled persons").Range("A1").End(xlDown).row - 1 + Worksheets("Withdrawal at t = 0").Range("A1").End(xlDown).row - 1
+
+        Dim i As Integer
+        Dim j As Integer
+        Dim k As Integer
+        Dim l As Integer
+    
+        i = 1 ' i-thDeadInsured
+        j = 3 ' j-thDisabledInsured
+        k = 4 ' k-thWithdrawal
+        l = 13 ' l-thRetirement
+
+        For temps = 0 To CT_TIMEPERIOD - 1
+
+            For insuredPerson = 1 To 40
+
+                Dim ageInsured
+                Dim gender
+                ageInsured = arrayInsured(simulation, 2, insuredPerson)
+                gender = arrayInsured(simulation, 5, insuredPerson)
+                Dim VB '=vested benefits
+                Dim increment As Integer
+    
+                Dim RO 'OrphanPension
+                Dim RCS 'WidowPension
+                Dim RI 'DisabilityPension
+                Dim REI 'ChildDisabilityPension
+                Dim RR 'RetirementPension
+                Dim RER 'ChildRetirementPension
+                Dim MARRIED
+                Dim AgeOfWidow As Integer
+                Dim NumberOfChild
+                Dim childAge As Integer
+                
+                VB = vestedBenefits(simulation, insuredPerson)
+
+                Randomize
+                Dim ranNumb1 As Double
+                Dim ranNumb5 As Double
+                Dim ranNumb6 As Double
+                Dim ranNumb7 As Double
+                Dim ranNumb8 As Double
+                Dim qxSurvivor
+                
+                ranNumb1 = Rnd()
+                ranNumb8 = Rnd()
+                
+                Dim qx1 As Double 'death prob
+                Dim qx2 As Double 'disability prob
+                Dim qx3 As Double 'withdrawal prob
+                Dim qx4 As Double 'retirement prob
+                
+                If gender = "M" Then
+                    qx1 = Worksheets("4-Decrement model - Männer").Cells(ageInsured - 17 + 9, 16)
+                    qx2 = Worksheets("4-Decrement model - Männer").Cells(ageInsured - 17 + 9, 17)
+                    qx3 = Worksheets("4-Decrement model - Männer").Cells(ageInsured - 17 + 9, 19)
+                    qx4 = Worksheets("4-Decrement model - Männer").Cells(ageInsured - 17 + 9, 18)
+                Else
+                    qx1 = Worksheets("4-Decrement model - Frauen").Cells(ageInsured - 17 + 9, 16)
+                    qx2 = Worksheets("4-Decrement model - Frauen").Cells(ageInsured - 17 + 9, 17)
+                    qx3 = Worksheets("4-Decrement model - Frauen").Cells(ageInsured - 17 + 9, 19)
+                    qx4 = Worksheets("4-Decrement model - Frauen").Cells(ageInsured - 17 + 9, 18)
+                End If
+                
+                If temps = 0 Then
+                    totalContributionsBenefitsArray(simulation, temps + 1, 1) = totalContributionsBenefitsArray(simulation, temps + 1, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY, insuredPerson)
+                    totalContributionsBenefitsArray(simulation, temps + 1, 2) = totalContributionsBenefitsArray(simulation, temps + 1, 2) + RetirementArray(simulation, temps + CT_FIRSTPOINTPLACEINARRAY, insuredPerson) + disabledArray(simulation, temps + CT_FIRSTPOINTPLACEINARRAY, insuredPerson) + WithdrawalArray(simulation, temps + CT_FIRSTPOINTPLACEINARRAY, insuredPerson)
+                End If
+
+
+                If ageInsured < 55 Then 'NO EARLY RETIREMENT POSSIBLE
+                
+                    If ranNumb1 < qx1 Then 'DEATH OF THE INSURED
+                        
+                        deadArray(simulation, 1, i) = arrayInsured(simulation, 1, insuredPerson)           '
+                        deadArray(simulation, 2, i) = arrayInsured(simulation, 2, insuredPerson) + 1       ' Gives information for the dead (#, age, salary, gender)
+                        deadArray(simulation, 3, i) = arrayInsured(simulation, 3, insuredPerson)           '
+                        deadArray(simulation, 5, i) = arrayInsured(simulation, 5, insuredPerson)           '
+                        
+                        MARRIED = conjoint(ageInsured, deadArray(simulation, 5, i)) 'l'assuré est-il marrié ?
+                        AgeOfWidow = AgeWidow(ageInsured, deadArray(simulation, 5, i)) 'quel âge a le conjoint lors du décès
+                        NumberOfChild = NumberChild(ageInsured, deadArray(simulation, 5, i)) 'nombre d'enfant qu'à l'assuré
+                        childAge = ageChild(ageInsured, deadArray(simulation, 5, i)) 'âge de l'enfant lors du décès
+                        RCS = MARRIED * widowPensionBeforeRetirement(ageInsured, deadArray(simulation, 5, i), deadArray(simulation, 3, insuredPerson), VB) 'montant de la rente de conjoint survivant SI marié
+                        RO = NumberOfChild * orphanPensionBeforeRetirement(ageInsured, deadArray(simulation, 5, i), deadArray(simulation, 3, insuredPerson), VB) 'montant de l'ensemble des rentes d'orphelin
+                                    
+                        Dim t As Integer
+                        
+                        t = 1
+                        
+                        Do While (t <= (CT_TIMEPERIOD - temps))
+                            ranNumb6 = Rnd()
+                            qxSurvivor = Worksheets("Frauen").Cells(AgeOfWidow - 17 + 9, 5)
+                            
+                            If (ranNumb6 < qxSurvivor) And (childAge <= 25) Then 'Conjoint décède donc pas de rente; mais rente pour enfant
+                                deadArray(simulation, temps + t + CT_FIRSTPOINTPLACEINARRAY, i) = RO
+                                RCS = 0
+                            ElseIf (ranNumb6 >= qxSurvivor) And (childAge <= 25) Then 'rente de conjoint et rente d'enfants
+                                deadArray(simulation, temps + t + CT_FIRSTPOINTPLACEINARRAY, i) = RO + RCS
+                            ElseIf (ranNumb6 >= qxSurvivor) And (childAge > 25) Then 'rente de conjoint seulement
+                                deadArray(simulation, temps + t + CT_FIRSTPOINTPLACEINARRAY, i) = RCS
+                                RO = 0
+                            Else
+                                RCS = 0
+                                RO = 0
+                            End If
+            
+                            totalContributionsBenefitsArray(simulation, temps + t + 1, 2) = totalContributionsBenefitsArray(simulation, temps + t + 1, 2) + RO + RCS
+                            IndividualReserveArray(simulation, temps + t + 1, insuredPerson) = IndividualReserveIfDead(deadArray(simulation, 2, i), deadArray(simulation, 5, i), childAge, RCS, RO)
+                            CommitmentBenefitsArray(simulation, temps + t + 1) = CommitmentBenefitsArray(simulation, temps + t + 1) + IndividualReserveIfDead(deadArray(simulation, 2, i), deadArray(simulation, 5, i), childAge, RCS, RO)
+                            t = t + 1
+                            childAge = childAge + 1
+                            AgeOfWidow = AgeOfWidow + 1
+                        Loop
+                                                
+                        '-----------------------------------------------------------------
+                        'CREATION OF A NEW ACTIVE INSURED
+                        '-----------------------------------------------------------------
+                        initNumInsured = initNumInsured + 1
+                        arrayInsured(simulation, 1, insuredPerson) = initNumInsured
+                        arrayInsured(simulation, 2, insuredPerson) = Int((61 - 25 + 1) * Rnd + 25)
+                        arrayInsured(simulation, 3, insuredPerson) = salaireinsuredPerson(arrayInsured(simulation, 2, insuredPerson))
+                        If ranNumb8 <= 0.5 Then
+                            arrayInsured(simulation, 5, insuredPerson) = "F"
+                        Else
+                            arrayInsured(simulation, 5, insuredPerson) = "M"
+                        End If
+                        arrayInsured(simulation, 4, insuredPerson) = tauxCotisation(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 3, insuredPerson), arrayInsured(simulation, 5, insuredPerson), VB)
+                        arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                        totalContributionsBenefitsArray(simulation, temps + 2, 1) = totalContributionsBenefitsArray(simulation, temps + 2, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson)
+                        IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                        CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                        i = i + 1
+                        
+                    Else 'not dead
+                        If (ranNumb1 < qx2 + qx1) And (ranNumb1 >= qx1) Then 'disabled
+                 
+                            disabledArray(simulation, 1, j) = arrayInsured(simulation, 1, insuredPerson)
+                            disabledArray(simulation, 2, j) = arrayInsured(simulation, 2, insuredPerson) + 1
+                            disabledArray(simulation, 3, j) = arrayInsured(simulation, 3, insuredPerson)
+                            disabledArray(simulation, 5, j) = arrayInsured(simulation, 5, insuredPerson)
+                            'calculate the pensions given to the disabled
+                            NumberOfChild = NumberChild(ageInsured, deadArray(simulation, 5, i))
+                            RI = disabilityPension(ageInsured, disabledArray(simulation, 5, j), arrayInsured(simulation, 3, insuredPerson), VB)
+                            REI = disabledChildPension(ageInsured, disabledArray(simulation, 5, j), arrayInsured(simulation, 3, insuredPerson), VB)
+                            
+                            Dim t1 As Integer
+                            increment = 0
+                            For t1 = 1 To (CT_TIMEPERIOD - temps)
+                                If increment = 0 Then
+                                    Dim qxi
+                                    qxi = Worksheets("4-Decrement model - Männer").Cells(disabledArray(simulation, 2, j) + t1 - 17 + 9, 4)
+                                    ranNumb5 = Rnd()
+                                
+                                    If ranNumb5 < qxi Then 'death of the disabled
+                                        MARRIED = conjoint(ageInsured, disabledArray(simulation, 5, j)) 'l'assuré est-il marrié ?
+                                        AgeOfWidow = AgeWidow(ageInsured, deadArray(simulation, 5, i)) 'quel âge a le conjoint lors du décès
+                                        NumberOfChild = NumberChild(ageInsured, deadArray(simulation, 5, i)) 'nombre d'enfant qu'à l'assuré
+                                        childAge = ageChild(ageInsured, deadArray(simulation, 5, i)) 'âge de l'enfant lors du décès
+                                        RO = NumberOfChild * REI 'montant de l'ensemble des rentes d'orphelin
+                                        RCS = MARRIED * widowPensionBeforeRetirement(ageInsured, disabledArray(simulation, 5, j), RI, VB) 'montant de la rente de conjoint survivant SI marié
+                                    
+                                        For increment = t1 To (CT_TIMEPERIOD - temps - t1)
+                                            ranNumb6 = Rnd()
+                                            qxSurvivor = Worksheets("Frauen").Cells(AgeOfWidow - 17 + 9, 5)
+                                            If (ranNumb6 < qxSurvivor) And (childAge <= 25) Then 'Conjoint décède donc pas de rente; mais rente pour enfant
+                                                deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RO
+                                                RCS = 0
+                                            ElseIf (ranNumb6 >= qxSurvivor) And (childAge <= 25) Then 'rente de conjoint et rente d'enfants
+                                                deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RO + RCS
+                                            ElseIf (ranNumb6 >= qxSurvivor) And (childAge > 25) Then 'rente de conjoint seulement
+                                                deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RCS
+                                                RO = 0
+                                            Else
+                                                RCS = 0
+                                                RO = 0
+                                            End If
+                                            
+                                            totalContributionsBenefitsArray(simulation, temps + increment + 1, 2) = totalContributionsBenefitsArray(simulation, temps + increment + 1, 2) + RO + RCS
+                                            IndividualReserveArray(simulation, temps + increment + 1, insuredPerson) = IndividualReserveIfDead(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RCS, RO)
+                                            CommitmentBenefitsArray(simulation, temps + increment + 1) = CommitmentBenefitsArray(simulation, temps + increment + 1) + IndividualReserveIfDead(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RCS, RO)
+                                            childAge = childAge + 1
+                                            AgeOfWidow = AgeOfWidow + 1
+                                        
+                                        Next increment
+                                    
+                                        i = i + 1
+                                    
+                                    Else 'NO DEATH of the insured
+                                        childAge = ageChild(ageInsured, deadArray(simulation, 5, i)) 'âge de l'enfant lors de l'invalidité
+                                        If childAge <= 25 Then
+                                            disabledArray(simulation, temps + t1 + CT_FIRSTPOINTPLACEINARRAY, j) = RI + NumberOfChild * REI
+                                        Else
+                                            disabledArray(simulation, temps + t1 + CT_FIRSTPOINTPLACEINARRAY, j) = RI
+                                            REI = 0
+                                        End If
+                                            totalContributionsBenefitsArray(simulation, temps + t1 + 1, 2) = totalContributionsBenefitsArray(simulation, temps + t1 + 1, 2) + disabledArray(simulation, temps + t1 + CT_FIRSTPOINTPLACEINARRAY, j)
+                                            IndividualReserveArray(simulation, temps + t1 + 1, insuredPerson) = IndividualReserveIfDisabled(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RI, REI)
+                                            CommitmentBenefitsArray(simulation, temps + increment + 1) = CommitmentBenefitsArray(simulation, temps + increment + 1) + IndividualReserveIfDisabled(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RI, REI)
+                                            childAge = childAge + 1
+                                            disabledArray(simulation, 2, j) = disabledArray(simulation, 2, j) + 1
+                                    End If
+                                End If
+                            Next t1
+                            
+                            '--------------------------------------------------------------------
+                            ' CREATION OF A NEW ACTIVE INSURED
+                            '--------------------------------------------------------------------
+                            initNumInsured = initNumInsured + 1
+                            arrayInsured(simulation, 1, insuredPerson) = initNumInsured
+                            arrayInsured(simulation, 2, insuredPerson) = Int((61 - 25 + 1) * Rnd + 25)
+                            arrayInsured(simulation, 3, insuredPerson) = salaireinsuredPerson(arrayInsured(simulation, 2, insuredPerson))
+                            If ranNumb8 <= 0.5 Then
+                                arrayInsured(simulation, 5, insuredPerson) = "F"
+                            Else
+                                arrayInsured(simulation, 5, insuredPerson) = "M"
+                            End If
+                            arrayInsured(simulation, 4, insuredPerson) = tauxCotisation(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 3, insuredPerson), arrayInsured(simulation, 5, insuredPerson), VB)
+                            arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                            totalContributionsBenefitsArray(simulation, temps + 2, 1) = totalContributionsBenefitsArray(simulation, temps + 2, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson)
+                            IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                            CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+
+                            j = j + 1
+                            
+                        Else 'not dead nor disabled
+                            If (ranNumb1 < qx3 + qx2 + qx1) And (ranNumb1 >= qx1 + qx2) Then 'withdrawal
+
+                                WithdrawalArray(simulation, 1, k) = arrayInsured(simulation, 1, insuredPerson)
+                                WithdrawalArray(simulation, 2, k) = arrayInsured(simulation, 2, insuredPerson) + 1
+                                WithdrawalArray(simulation, 3, k) = arrayInsured(simulation, 3, insuredPerson)
+                                                
+                                WithdrawalArray(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, k) = vestedBenefits(simulation, insuredPerson)
+                                
+                                '--------------------------------------------------------------------
+                                ' CREATION OF A NEW ACTIVE INSURED
+                                '--------------------------------------------------------------------
+                                initNumInsured = initNumInsured + 1
+                                arrayInsured(simulation, 1, insuredPerson) = initNumInsured
+                                arrayInsured(simulation, 2, insuredPerson) = Int((61 - 25 + 1) * Rnd + 25)
+                                arrayInsured(simulation, 3, insuredPerson) = salaireinsuredPerson(arrayInsured(simulation, 2, insuredPerson))
+                                If ranNumb8 <= 0.5 Then
+                                    arrayInsured(simulation, 5, insuredPerson) = "F"
+                                Else
+                                    arrayInsured(simulation, 5, insuredPerson) = "M"
+                                End If
+                                arrayInsured(simulation, 4, insuredPerson) = tauxCotisation(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 3, insuredPerson), arrayInsured(simulation, 5, insuredPerson), VB)
+                                arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                                totalContributionsBenefitsArray(simulation, temps + 2, 1) = totalContributionsBenefitsArray(simulation, temps + 2, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson)
+                                IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                
+                                totalContributionsBenefitsArray(simulation, temps + 2, 2) = totalContributionsBenefitsArray(simulation, temps + 2, 2) + WithdrawalArray(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, k)
+                                
+                                k = k + 1
+                                
+                            Else ' remains active
+                              
+                                arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                                arrayInsured(simulation, 2, insuredPerson) = arrayInsured(simulation, 2, insuredPerson) + 1
+                                arrayInsured(simulation, 3, insuredPerson) = arrayInsured(simulation, 3, insuredPerson) * (arraySalaries(arrayInsured(simulation, 2, insuredPerson)) / arraySalaries(arrayInsured(simulation, 2, insuredPerson) - 1))
+                                totalContributionsBenefitsArray(simulation, temps + 2, 1) = arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) + totalContributionsBenefitsArray(simulation, temps + 2, 1)
+                                IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                            
+                            End If
+                        End If
+                    End If
+                End If
+                        
+                        
+                        
+                If ageInsured >= 55 Then 'no early retirement possible
+                    If ranNumb1 < qx1 Then 'insured person dies
+                        
+                        deadArray(simulation, 1, i) = arrayInsured(simulation, 1, insuredPerson)
+                        deadArray(simulation, 2, i) = arrayInsured(simulation, 2, insuredPerson) + 1
+                        deadArray(simulation, 3, i) = arrayInsured(simulation, 3, insuredPerson)
+                        deadArray(simulation, 5, i) = arrayInsured(simulation, 5, insuredPerson)
+                                                
+                        MARRIED = conjoint(ageInsured, deadArray(simulation, 5, i)) 'l'assuré est-il marrié ?
+                        AgeOfWidow = AgeWidow(ageInsured, deadArray(simulation, 5, i)) 'quel âge a le conjoint lors du décès
+                        NumberOfChild = NumberChild(ageInsured, deadArray(simulation, 5, i)) 'nombre d'enfant qu'à l'assuré
+                        childAge = ageChild(ageInsured, deadArray(simulation, 5, i)) 'âge de l'enfant lors du décès
+                        RCS = MARRIED * widowPensionBeforeRetirement(ageInsured, deadArray(simulation, 5, i), arrayInsured(simulation, 3, insuredPerson), VB) 'montant de la rente de conjoint survivant SI marié
+                        RO = NumberOfChild * orphanPensionBeforeRetirement(ageInsured, deadArray(simulation, 5, i), arrayInsured(simulation, 3, insuredPerson), VB) 'montant de l'ensemble des rentes d'orphelin
+                        
+                        Dim t2
+                        t2 = 1
+                        Do While (t2 <= (CT_TIMEPERIOD - temps))
+                            ranNumb6 = Rnd()
+                            qxSurvivor = Worksheets("Frauen").Cells(AgeOfWidow - 17 + 9, 5)
+                            If (ranNumb6 < qxSurvivor) And (childAge <= 25) Then 'Conjoint décède donc pas de rente; mais rente pour enfant
+                                deadArray(simulation, temps + t2 + CT_FIRSTPOINTPLACEINARRAY, i) = RO
+                                RCS = 0
+                            ElseIf (ranNumb6 >= qxSurvivor) And (childAge <= 25) Then 'rente de conjoint et rente d'enfants
+                                deadArray(simulation, temps + t2 + CT_FIRSTPOINTPLACEINARRAY, i) = RO + RCS
+                            ElseIf (ranNumb6 >= qxSurvivor) And (childAge > 25) Then 'rente de conjoint seulement
+                                deadArray(simulation, temps + t2 + CT_FIRSTPOINTPLACEINARRAY, i) = RCS
+                                RO = 0
+                            Else
+                                RCS = 0
+                                RO = 0
+                            End If
+                            
+                            totalContributionsBenefitsArray(simulation, temps + t2 + 1, 2) = totalContributionsBenefitsArray(simulation, temps + t2 + 1, 2) + RO + RCS
+                            IndividualReserveArray(simulation, temps + t2 + 1, insuredPerson) = IndividualReserveIfDead(deadArray(simulation, 2, i), deadArray(simulation, 5, i), childAge, RCS, RO)
+                            CommitmentBenefitsArray(simulation, temps + t2 + 1) = CommitmentBenefitsArray(simulation, temps + t2 + 1) + IndividualReserveIfDead(deadArray(simulation, 2, i), deadArray(simulation, 5, i), childAge, RCS, RO)
+                            
+                            t2 = t2 + 1
+                            childAge = childAge + 1
+                            AgeOfWidow = AgeOfWidow + 1
+                        Loop
+                    
+                            '--------------------------------------------------------------------
+                            'CREATION OF A NEW ACTIVE INSURED
+                            '--------------------------------------------------------------------
+                            initNumInsured = initNumInsured + 1
+                            arrayInsured(simulation, 1, insuredPerson) = initNumInsured
+                            arrayInsured(simulation, 2, insuredPerson) = Int((61 - 25 + 1) * Rnd + 25)
+                            arrayInsured(simulation, 3, insuredPerson) = salaireinsuredPerson(arrayInsured(simulation, 2, insuredPerson))
+                            If ranNumb8 <= 0.5 Then
+                                arrayInsured(simulation, 5, insuredPerson) = "F"
+                            Else
+                                arrayInsured(simulation, 5, insuredPerson) = "M"
+                            End If
+                            arrayInsured(simulation, 4, insuredPerson) = tauxCotisation(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 3, insuredPerson), arrayInsured(simulation, 5, insuredPerson), VB)
+                            arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                            totalContributionsBenefitsArray(simulation, temps + 2, 1) = totalContributionsBenefitsArray(simulation, temps + 2, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson)
+                            IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                            CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                            
+                            i = i + 1
+                        
+                        
+                    Else 'not dead
+                
+                        If (ranNumb1 < qx2 + qx1) And (ranNumb1 >= qx1) Then 'disabled
+                            
+                            disabledArray(simulation, 1, j) = arrayInsured(simulation, 1, insuredPerson)
+                            disabledArray(simulation, 2, j) = arrayInsured(simulation, 2, insuredPerson) + 1
+                            disabledArray(simulation, 3, j) = arrayInsured(simulation, 3, insuredPerson)
+                            disabledArray(simulation, 5, j) = arrayInsured(simulation, 5, insuredPerson)
+                            
+                            NumberOfChild = NumberChild(ageInsured, deadArray(simulation, 5, i))
+                            RI = disabilityPension(ageInsured, disabledArray(simulation, 5, j), arrayInsured(simulation, 3, insuredPerson), VB)
+                            REI = disabledChildPension(ageInsured, disabledArray(simulation, 5, j), arrayInsured(simulation, 3, insuredPerson), VB)
+                            
+                            increment = 0
+                            Dim t3 As Integer
+                            For t3 = 1 To (CT_TIMEPERIOD - temps)
+                            If increment = 0 Then
+                                qxi = Worksheets("4-Decrement model - Männer").Cells(disabledArray(simulation, 2, j) + t3 - 17 + 9, 4)
+                                ranNumb5 = Rnd()
+                                If ranNumb5 < qxi Then
+                                    MARRIED = conjoint(ageInsured, disabledArray(simulation, 5, j)) 'l'assuré est-il marrié ?
+                                    AgeOfWidow = AgeWidow(ageInsured, deadArray(simulation, 5, i)) 'quel âge a le conjoint lors du décès
+                                    NumberOfChild = NumberChild(ageInsured, deadArray(simulation, 5, i)) 'nombre d'enfant qu'à l'assuré
+                                    childAge = ageChild(ageInsured, deadArray(simulation, 5, i)) 'âge de l'enfant lors du décès
+                                    RCS = MARRIED * widowPensionBeforeRetirement(ageInsured, disabledArray(simulation, 5, j), RI, VB) 'montant de la rente de conjoint survivant SI marié
+                                    RO = NumberOfChild * REI 'montant de l'ensemble des rentes d'orphelin
+                                    
+                                    For increment = t3 To (CT_TIMEPERIOD - temps)
+                                        disabledArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, j) = 0
+                                        ranNumb6 = Rnd()
+                                        qxSurvivor = Worksheets("Frauen").Cells(AgeOfWidow - 17 + 9, 5)
+                                        If (ranNumb6 < qxSurvivor) And (childAge <= 25) Then 'Conjoint décède donc pas de rente; mais rente pour enfant
+                                            deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RO
+                                            RCS = 0
+                                        ElseIf (ranNumb6 >= qxSurvivor) And (childAge <= 25) Then 'rente de conjoint et rente d'enfants
+                                            deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RO + RCS
+                                            RCS = 0
+                                        ElseIf (ranNumb6 >= qxSurvivor) And (childAge > 25) Then 'rente de conjoint seulement
+                                            deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RCS
+                                            RO = 0
+                                        Else
+                                            RCS = 0
+                                            RO = 0
+                                        End If
+                                        
+                                        totalContributionsBenefitsArray(simulation, temps + increment + 1, 2) = totalContributionsBenefitsArray(simulation, temps + increment + 1, 2) + RO + RCS
+                                        IndividualReserveArray(simulation, temps + increment + 1, insuredPerson) = IndividualReserveIfDead(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RCS, RO)
+                                        CommitmentBenefitsArray(simulation, temps + increment + 1) = CommitmentBenefitsArray(simulation, temps + increment + 1) + IndividualReserveIfDead(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RCS, RO)
+                                        childAge = childAge + 1
+                                        AgeOfWidow = AgeOfWidow + 1
+                                
+                                        i = i + 1
+                                              
+                                    Next increment
+                                
+                                Else
+                                    childAge = ageChild(ageInsured, deadArray(simulation, 5, i))
+                                    If childAge <= 25 Then
+                                        disabledArray(simulation, temps + t3 + CT_FIRSTPOINTPLACEINARRAY, j) = RI + NumberOfChild * REI
+                                    Else
+                                        disabledArray(simulation, temps + t3 + CT_FIRSTPOINTPLACEINARRAY, j) = RI
+                                        REI = 0
+                                    End If
+                                    totalContributionsBenefitsArray(simulation, temps + t3 + 1, 2) = totalContributionsBenefitsArray(simulation, temps + t3 + 1, 2) + disabledArray(simulation, temps + t3 + CT_FIRSTPOINTPLACEINARRAY, j)
+                                    IndividualReserveArray(simulation, temps + t3 + 1, insuredPerson) = IndividualReserveIfDisabled(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RI, REI)
+                                    CommitmentBenefitsArray(simulation, temps + increment + 1) = CommitmentBenefitsArray(simulation, temps + increment + 1) + IndividualReserveIfDisabled(disabledArray(simulation, 2, j), disabledArray(simulation, 5, j), childAge, RI, REI)
+                                    childAge = childAge + 1
+                                    disabledArray(simulation, 2, j) = disabledArray(simulation, 2, j) + 1
+                                    arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY, insuredPerson) = 0
+                                End If
+                            End If
+                            Next t3
+                            
+                            '---------------------------------------------------------------------
+                            'CREATION OF A NEW ACTIVE INSURED
+                            '---------------------------------------------------------------------
+                            initNumInsured = initNumInsured + 1 ' CREATION OF A NEW ACTIVE INSURED
+                            arrayInsured(simulation, 1, insuredPerson) = initNumInsured
+                            arrayInsured(simulation, 2, insuredPerson) = Int((61 - 25 + 1) * Rnd + 25)
+                            arrayInsured(simulation, 3, insuredPerson) = salaireinsuredPerson(arrayInsured(simulation, 2, insuredPerson))
+                            If ranNumb8 <= 0.5 Then
+                                arrayInsured(simulation, 5, insuredPerson) = "F"
+                            Else
+                                arrayInsured(simulation, 5, insuredPerson) = "M"
+                            End If
+                            arrayInsured(simulation, 4, insuredPerson) = tauxCotisation(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 3, insuredPerson), arrayInsured(simulation, 5, insuredPerson), VB)
+                            arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                            totalContributionsBenefitsArray(simulation, temps + 2, 1) = totalContributionsBenefitsArray(simulation, temps + 2, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson)
+                            IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                            CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                            
+                            j = j + 1
+                
+                        Else 'not dead nor disabled
+                
+                            If (ranNumb1 < qx3 + qx2 + qx1) And (ranNumb1 >= qx1 + qx2) Then 'withdrawal
+                            
+                
+                                WithdrawalArray(simulation, 1, k) = arrayInsured(simulation, 1, insuredPerson)
+                                WithdrawalArray(simulation, 2, k) = arrayInsured(simulation, 2, insuredPerson) + 1
+                                WithdrawalArray(simulation, 3, k) = arrayInsured(simulation, 3, insuredPerson)
+                                
+                                WithdrawalArray(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, k) = vestedBenefits(simulation, insuredPerson)
+                                
+                                '--------------------------------------------------------------------
+                                'CREATION OF A NEW ACTIVE INSURED
+                                '--------------------------------------------------------------------
+                                initNumInsured = initNumInsured + 1 ' CREATION OF A NEW ACTIVE INSURED
+                                arrayInsured(simulation, 1, insuredPerson) = initNumInsured
+                                arrayInsured(simulation, 2, insuredPerson) = Int((61 - 25 + 1) * Rnd + 25)
+                                arrayInsured(simulation, 3, insuredPerson) = salaireinsuredPerson(arrayInsured(simulation, 2, insuredPerson))
+                                If ranNumb8 <= 0.5 Then
+                                    arrayInsured(simulation, 5, insuredPerson) = "F"
+                                Else
+                                    arrayInsured(simulation, 5, insuredPerson) = "M"
+                                End If
+                                arrayInsured(simulation, 4, insuredPerson) = tauxCotisation(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 3, insuredPerson), arrayInsured(simulation, 5, insuredPerson), VB)
+                                arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                                IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                totalContributionsBenefitsArray(simulation, temps + 2, 1) = totalContributionsBenefitsArray(simulation, temps + 2, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson)
+                                
+                                k = k + 1
+                                
+                            Else
+                
+                                If (ranNumb1 < qx4 + qx3 + qx2 + qx1) And (ranNumb1 >= qx1 + qx2 + qx3) Then 'retired
+                                
+                                    RetirementArray(simulation, 1, l) = arrayInsured(simulation, 1, insuredPerson)
+                                    RetirementArray(simulation, 2, l) = arrayInsured(simulation, 2, insuredPerson) + 1
+                                    RetirementArray(simulation, 3, l) = arrayInsured(simulation, 3, insuredPerson)
+                                    RetirementArray(simulation, 5, l) = arrayInsured(simulation, 5, insuredPerson)
+                                    
+                                    RR = retirementPension(ageInsured, disabledArray(simulation, 5, j), arrayInsured(simulation, 3, insuredPerson), VB)
+                                    RER = retiredChildPension(ageInsured, disabledArray(simulation, 5, j), arrayInsured(simulation, 3, insuredPerson), VB)
+                                    
+                                    Dim t4 As Integer
+                                    increment = 0
+                                    
+                                    
+                                    For t4 = 0 To (CT_TIMEPERIOD - temps)
+                                        If increment = 0 Then
+                                            Dim qxr 'probabilité de décès pour un retraité
+                                            ranNumb7 = Rnd()
+                                            qxr = Worksheets("4-Decrement model - Männer").Cells(RetirementArray(simulation, 2, l) + t4 - 17 + 9, 7)
+                                            If ranNumb7 < qxr Then 'death of retired
+                                                    MARRIED = conjoint(ageInsured, RetirementArray(simulation, 5, l)) 'l'assuré est-il marrié ?
+                                                    AgeOfWidow = AgeWidow(ageInsured, deadArray(simulation, 5, i)) 'quel âge a le conjoint lors du décès
+                                                    NumberOfChild = NumberChild(ageInsured, deadArray(simulation, 5, i)) 'nombre d'enfant qu'à l'assuré
+                                                    childAge = ageChild(ageInsured, deadArray(simulation, 5, i)) 'âge de l'enfant lors du décès
+                                                    RCS = MARRIED * widowPensionBeforeRetirement(ageInsured, disabledArray(simulation, 5, j), RR, VB) 'montant de la rente de conjoint survivant SI marié
+                                                    RO = NumberOfChild * orphanPensionBeforeRetirement(ageInsured, disabledArray(simulation, 5, j), RER, VB) 'montant de l'ensemble des rentes d'orphelin
+                                                    qxSurvivor = Worksheets("Frauen").Cells(AgeOfWidow - 17 + 9, 5)
+                                                    
+                                                    For increment = t4 To (CT_TIMEPERIOD - temps)
+                                                        If ranNumb7 < qxSurvivor And childAge >= 25 Then
+                                                            RCS = RO = 0
+                                                            deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = 0
+                                                        ElseIf ranNumb7 >= qxSurvivor And childAge >= 25 Then
+                                                            deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RCS
+                                                            RO = 0
+                                                        ElseIf ranNumb7 >= qxSurvivor And childAge < 25 Then
+                                                            deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RCS + RO
+                                                        ElseIf ranNumb7 < qxSurvivor And childAge < 25 Then
+                                                            deadArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, i) = RO
+                                                            RCS = 0
+                                                        End If
+                                                        RetirementArray(simulation, temps + increment + CT_FIRSTPOINTPLACEINARRAY, l) = 0
+                                                        totalContributionsBenefitsArray(simulation, temps + increment + 1, 2) = totalContributionsBenefitsArray(simulation, temps + increment + 1, 2) + RO + RCS
+                                                        IndividualReserveArray(simulation, temps + t4 + 1, insuredPerson) = IndividualReserveIfDead(RetirementArray(simulation, 2, l), RetirementArray(simulation, 5, l), childAge, RCS, RO)
+                                                        CommitmentBenefitsArray(simulation, temps + t4 + 1) = CommitmentBenefitsArray(simulation, temps + t4 + 1) + IndividualReserveIfDead(RetirementArray(simulation, 2, l), RetirementArray(simulation, 5, l), childAge, RCS, RO)
+                                                        AgeOfWidow = AgeOfWidow + 1
+                                                        childAge = childAge + 1
+                                                    Next increment
+                                                    i = i + 1
+                                                                     
+                                            Else
+                                                childAge = ageChild(ageInsured, deadArray(simulation, 5, i))
+                                                If childAge <= 25 Then
+                                                    RetirementArray(simulation, temps + t4 + CT_FIRSTPOINTPLACEINARRAY, l) = RR + RER
+                                                Else
+                                                    RetirementArray(simulation, temps + t4 + CT_FIRSTPOINTPLACEINARRAY, l) = RR
+                                                    RER = 0
+                                                End If
+                                                totalContributionsBenefitsArray(simulation, temps + t4 + 1, 2) = totalContributionsBenefitsArray(simulation, temps + t4 + 1, 2) + RR + RER
+                                                IndividualReserveArray(simulation, temps + t4 + 1, insuredPerson) = IndividualReserveIfRetired(RetirementArray(simulation, 2, l), RetirementArray(simulation, 5, l), childAge, RR, RER, 0, 0)
+                                                CommitmentBenefitsArray(simulation, temps + t4 + 1) = CommitmentBenefitsArray(simulation, temps + t4 + 1) + IndividualReserveIfRetired(RetirementArray(simulation, 2, l), RetirementArray(simulation, 5, l), childAge, RR, RER, 0, 0)
+                                                RetirementArray(simulation, 2, l) = RetirementArray(simulation, 2, l) + 1
+                                                childAge = childAge + 1
+                                            End If
+                                        End If
+                                    Next t4
+                                    
+                                    '---------------------------------------------------------------------
+                                    'CREATION OF A NEW ACTIVE INSURED
+                                    '---------------------------------------------------------------------
+                                    initNumInsured = initNumInsured + 1
+                                    arrayInsured(simulation, 1, insuredPerson) = initNumInsured
+                                    arrayInsured(simulation, 2, insuredPerson) = Int((61 - 25 + 1) * Rnd + 25)
+                                    arrayInsured(simulation, 3, insuredPerson) = salaireinsuredPerson(arrayInsured(simulation, 2, insuredPerson))
+                                    If ranNumb8 <= 0.5 Then
+                                        arrayInsured(simulation, 5, insuredPerson) = "F"
+                                    Else
+                                        arrayInsured(simulation, 5, insuredPerson) = "M"
+                                    End If
+                                    arrayInsured(simulation, 4, insuredPerson) = tauxCotisation(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 3, insuredPerson), arrayInsured(simulation, 5, insuredPerson), VB)
+                                    arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                                    IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                    CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                    totalContributionsBenefitsArray(simulation, temps + 2, 1) = totalContributionsBenefitsArray(simulation, temps + 2, 1) + arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson)
+                                    l = l + 1
+                                    
+                                    
+                                Else 'remains active
+                                    arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) = arrayInsured(simulation, 4, insuredPerson) * arrayInsured(simulation, 3, insuredPerson)
+                                    arrayInsured(simulation, 2, insuredPerson) = arrayInsured(simulation, 2, insuredPerson) + 1
+                                    arrayInsured(simulation, 3, insuredPerson) = arrayInsured(simulation, 3, insuredPerson) * (arraySalaries(arrayInsured(simulation, 2, insuredPerson)) / arraySalaries(arrayInsured(simulation, 2, insuredPerson) - 1))
+                                    totalContributionsBenefitsArray(simulation, temps + 2, 1) = arrayInsured(simulation, temps + CT_FIRSTPOINTPLACEINARRAY + 1, insuredPerson) + totalContributionsBenefitsArray(simulation, temps + 2, 1)
+                                    IndividualReserveArray(simulation, temps + 2, insuredPerson) = IndividualReserveIfActive(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                    CommitmentBenefitsArray(simulation, temps + 2) = CommitmentBenefitsArray(simulation, temps + 2) + BenefitsCommitments(arrayInsured(simulation, 2, insuredPerson), arrayInsured(simulation, 5, insuredPerson), arrayInsured(simulation, 3, insuredPerson), VB)
+                                End If
+                            End If
+                        End If
+                    End If
+                End If
+                           
+                totalReserve(simulation, temps + 2) = totalReserve(simulation, temps + 2) + IndividualReserveArray(simulation, temps + 2, insuredPerson)
+
+            Next insuredPerson
+
+        Next temps
+        
+    Next simulation
+
+'-------------------------------------------------------------------
+' Compute the average
+'-------------------------------------------------------------------
+Dim time As Integer
+Dim simul As Integer
+
+For time = 0 To CT_TIMEPERIOD
+
+    SumOfContributionsBenefitsOverEverySimulations(time + 1, 1) = 0
+    SumOfContributionsBenefitsOverEverySimulations(time + 1, 2) = 0
+    
+        For simul = 1 To CT_SIMULATIONMAX
+            SumOfContributionsBenefitsOverEverySimulations(time + 1, 1) = SumOfContributionsBenefitsOverEverySimulations(time + 1, 1) + totalContributionsBenefitsArray(simul, time + 1, 1)
+            SumOfContributionsBenefitsOverEverySimulations(time + 1, 2) = SumOfContributionsBenefitsOverEverySimulations(time + 1, 2) + totalContributionsBenefitsArray(simul, time + 1, 2)
+            SumOfReservesOverEverySimulation(time + 1) = SumOfReservesOverEverySimulation(time + 1) + totalReserve(simul, time + 1)
+            SumOfCommitmentBenefits(time + 1) = SumOfCommitmentBenefits(time + 1) + CommitmentBenefitsArray(simul, time + 1)
+        Next simul
+    
+Next time
+
+time = 0
+For time = 0 To CT_TIMEPERIOD
+    AverageOfContributionsBenefits(time + 1, 1) = SumOfContributionsBenefitsOverEverySimulations(time + 1, 1) / CT_SIMULATIONMAX
+    AverageOfContributionsBenefits(time + 1, 2) = SumOfContributionsBenefitsOverEverySimulations(time + 1, 2) / CT_SIMULATIONMAX
+    AverageReserves(time + 1) = SumOfReservesOverEverySimulation(time + 1) / CT_SIMULATIONMAX
+    AverageCommitmentBenefits(time + 1) = SumOfCommitmentBenefits(time + 1) / CT_SIMULATIONMAX
+Next time
+
+Call SimulationAssets
+
+'-------------------------------------------------------------------
+' Compute the variance
+'-------------------------------------------------------------------
+Dim averageDC
+Dim DC
+
+time = 0
+simul = 0
+For time = 0 To CT_TIMEPERIOD
+    averageDC = AverageAsset(temps + 1) / AverageCommitmentBenefits(time + 1)
+    For simul = 1 To CT_SIMULATIONMAX
+        DC = asset(simul, time + 1) / CommitmentBenefitsArray(simul, time + 1)
+        varianceArray(time + 1) = varianceArray(time + 1) + (DC - averageDC) ^ 2
+    Next simul
+    varianceArray(time + 1) = varianceArray(time + 1) / (CT_SIMULATIONMAX - 1)
+Next time
+
+Worksheets("result").Range("B1:C101") = AverageOfContributionsBenefits
+Worksheets("result2").Range("B2:AZ2") = AverageReserves
+Worksheets("result2").Range("B4:AZ4") = AverageCommitmentBenefits
+Worksheets("result2").Range("B6:AZ6") = varianceArray
+
+End Sub
+
+
+Sub SimulationAssets()
+
+Dim simulation As Integer
+Dim returnOnPortfolio As Double
+Dim varianceOfPortfolio As Double
+Dim initialAmountToInvest As Double
+Dim amountInvestedInBonds As Double
+Dim amountInvestedInBondsForeignCurrency
+Dim amountInvestedInStocks As Double
+Dim amountInvestedInEquities
+Dim amountInvestedInEquitiesGlobal
+Dim amountInvestedInRealEstateSwitzerlandListed
+Dim amountInvestedInRealEstateGlobalListed
+Dim amountInvestedInRealEstateSwitzerlandUnlisted
+Dim amountInvestedInRealEstateGlobalUnlisted
+Dim amountInvestedInHedgeFunds
+Dim amountInvestedInPrivateEquity
+Dim amountInvestedInInfrastructure
+Dim amountInvestedInCommodities
+Dim amountInCash
+
+Dim matrixVarianceCovariance(12, 12) As Double
+Dim returnMatrix(12)
+Dim lowerTriangularMatrix(12, 12) As Double
+
+
+Dim i As Integer
+Dim j As Integer
+Dim k As Integer
+Dim t As Integer
+
+'-------------------------------------------------------------------------------------------------
+'Creating the Variance-Covariance matrix
+'-------------------------------------------------------------------------------------------------
+For i = 1 To 12
+    For j = 1 To 12
+    matrixVarianceCovariance(i, j) = Worksheets("Variance-Covariance Matrix").Cells(i + 1, j + 1)
+    lowerTriangularMatrix(i, j) = Worksheets("Cholesky Decomposition").Cells(i, j)
+    Next j
+Next i
+
+'-------------------------------------------------------------------------------------------------
+'Creating the yield vector
+'-------------------------------------------------------------------------------------------------
+For k = 1 To 12
+    returnMatrix(k) = Worksheets("Yield - Risk").Cells(k + 1, 2)
+Next k
+
+Dim theta1 As Double
+Dim theta2 As Double
+Dim theta3 As Double
+Dim theta4 As Double
+Dim theta5 As Double
+Dim theta6 As Double
+Dim theta7 As Double
+Dim theta8 As Double
+Dim theta9 As Double
+Dim theta10 As Double
+Dim theta11 As Double
+Dim theta12 As Double
+Dim thetaCash As Double
+
+theta1 = Worksheets("Yield - Risk").Cells(2, 5)
+theta2 = Worksheets("Yield - Risk").Cells(3, 5)
+theta3 = Worksheets("Yield - Risk").Cells(4, 5)
+theta4 = Worksheets("Yield - Risk").Cells(5, 5)
+theta5 = Worksheets("Yield - Risk").Cells(6, 5)
+theta6 = Worksheets("Yield - Risk").Cells(7, 5)
+theta7 = Worksheets("Yield - Risk").Cells(8, 5)
+theta8 = Worksheets("Yield - Risk").Cells(9, 5)
+theta9 = Worksheets("Yield - Risk").Cells(10, 5)
+theta10 = Worksheets("Yield - Risk").Cells(11, 5)
+theta11 = Worksheets("Yield - Risk").Cells(12, 5)
+theta12 = Worksheets("Yield - Risk").Cells(13, 5)
+
+For simulation = 1 To CT_SIMULATIONMAX
+
+    initialAmountToInvest = CommitmentBenefitsArray(simulation, 2) * 1.1 'ASSUMPTION: DC = 100%
+    asset(simulation, 1) = initialAmountToInvest
+    asset(simulation, 2) = initialAmountToInvest
+    
+    For t = 1 To CT_TIMEPERIOD - 1
+        Dim z(12) As Double
+        Dim x(12) As Double
+        Dim returnOnBonds
+        Dim returnOnStocks
+        Dim returnOnBondsForeignCurrency
+        Dim returnOnEquitiesGlobal
+        Dim returnOnRealEstateSwitzerlandListed
+        Dim returnOnRealEstateGlobalListed
+        Dim returnOnRealEstateSwitzerlandUnlisted
+        Dim returnOnRealEstateGlobalUnlisted
+        Dim returnOnHedgeFunds
+        Dim returnOnPrivateEquity
+        Dim returnOnInfrastructure
+        Dim returnOnCommodities
+
+        amountInvestedInBonds = theta1 * initialAmountToInvest
+        amountInvestedInBondsForeignCurrency = theta2 * initialAmountToInvest
+        amountInvestedInStocks = theta3 * initialAmountToInvest
+        amountInvestedInEquitiesGlobal = theta4 * initialAmountToInvest
+        amountInvestedInRealEstateSwitzerlandListed = theta5 * initialAmountToInvest
+        amountInvestedInRealEstateGlobalListed = theta6 * initialAmountToInvest
+        amountInvestedInRealEstateSwitzerlandUnlisted = theta7 * initialAmountToInvest
+        amountInvestedInRealEstateGlobalUnlisted = theta8 * initialAmountToInvest
+        amountInvestedInHedgeFunds = theta9 * initialAmountToInvest
+        amountInvestedInPrivateEquity = theta10 * initialAmountToInvest
+        amountInvestedInInfrastructure = theta11 * initialAmountToInvest
+        amountInvestedInCommodities = theta12 * initialAmountToInvest
+
+        Dim l As Integer
+
+        For l = 1 To 12
+            Randomize
+            z(l) = WorksheetFunction.Norm_S_Inv(Rnd()) 'to transform
+        Next l
+        
+        Dim transposeReturnMatrix()
+        transposeReturnMatrix = WorksheetFunction.Transpose(returnMatrix)
+        Dim transposeZ()
+        transposeZ = WorksheetFunction.Transpose(z)
+        Dim AZ()
+        AZ = WorksheetFunction.MMult(lowerTriangularMatrix, transposeZ)
+        
+        Dim xi As Integer
+        For xi = 1 To 12
+            x(xi) = transposeReturnMatrix(xi, 1) + AZ(xi, 1)
+        Next xi
+        
+        returnOnBonds = amountInvestedInBonds * x(1)
+        returnOnStocks = amountInvestedInStocks * x(3)
+        returnOnBondsForeignCurrency = amountInvestedInBondsForeignCurrency * x(2)
+        returnOnEquitiesGlobal = amountInvestedInEquitiesGlobal * x(4)
+        returnOnRealEstateSwitzerlandListed = amountInvestedInRealEstateSwitzerlandListed * x(5)
+        returnOnRealEstateGlobalListed = amountInvestedInRealEstateGlobalListed * x(6)
+        returnOnRealEstateSwitzerlandUnlisted = amountInvestedInRealEstateSwitzerlandUnlisted * x(7)
+        returnOnRealEstateGlobalUnlisted = amountInvestedInRealEstateGlobalUnlisted * x(8)
+        returnOnHedgeFunds = amountInvestedInHedgeFunds * x(9)
+        returnOnPrivateEquity = amountInvestedInPrivateEquity * x(10)
+        returnOnInfrastructure = amountInvestedInInfrastructure * x(11)
+        returnOnCommodities = amountInvestedInCommodities * x(12)
+        
+        initialAmountToInvest = initialAmountToInvest + returnOnBonds + returnOnStocks + returnOnBondsForeignCurrency + returnOnEquitiesGlobal + returnOnRealEstateSwitzerlandListed + _
+        returnOnRealEstateGlobalListed + returnOnRealEstateSwitzerlandUnlisted + returnOnRealEstateGlobalUnlisted + returnOnHedgeFunds + returnOnPrivateEquity + returnOnInfrastructure + _
+        returnOnCommodities + totalContributionsBenefitsArray(simulation, t + 1, 1) - totalContributionsBenefitsArray(simulation, t + 1, 2)
+        
+        asset(simulation, t + 2) = initialAmountToInvest
+        
+    Next t
+
+Next simulation
+
+t = 1
+simulation = 1
+Dim DCmin
+Dim DC25
+Dim DC50
+Dim DC75
+Dim DC01
+
+For t = 1 To CT_TIMEPERIOD
+    For simulation = 1 To CT_SIMULATIONMAX
+        arrayQuartile(simulation) = asset(simulation, t + 1)
+    Next simulation
+    
+    DCmin = Application.WorksheetFunction.Quartile(arrayQuartile, 0)
+    DC25 = Application.WorksheetFunction.Quartile(arrayQuartile, 1)
+    DC50 = Application.WorksheetFunction.Quartile(arrayQuartile, 2)
+    DC75 = Application.WorksheetFunction.Quartile(arrayQuartile, 3)
+    DC01 = Application.WorksheetFunction.Percentile(arrayQuartile, 0.01)
+    Worksheets("Result2").Cells(8, t + 2) = DCmin
+    Worksheets("Result2").Cells(9, t + 2) = DC25
+    Worksheets("Result2").Cells(10, t + 2) = DC50
+    Worksheets("Result2").Cells(11, t + 2) = DC75
+    Worksheets("Result2").Cells(12, t + 2) = DC01
+Next t
+
+'calculate the average
+
+Dim simul As Integer
+Dim temps As Integer
+
+For temps = 1 To CT_TIMEPERIOD
+    For simul = 1 To CT_SIMULATIONMAX
+        AverageAsset(temps + 1) = AverageAsset(temps + 1) + asset(simul, temps + 1)
+    Next simul
+    
+    AverageAsset(temps + 1) = AverageAsset(temps + 1) / CT_SIMULATIONMAX
+Next temps
+
+Worksheets("Result2").Range("B3:G3") = AverageAsset
+
+End Sub
+
